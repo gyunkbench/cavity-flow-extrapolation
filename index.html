@@ -1,0 +1,575 @@
+<!doctype html><html><head><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<title>Cavity Flow NN Extrapolation</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: instrument panel — control strip on top, one large speed field with its scale, three component fields beside it, comparison strip and verification log below. */
+:root{
+  --bg:#f3f5f8; --panel:#ffffff; --ink:#15202e; --muted:#5a6878; --line:#d9e0e8;
+  --accent:#0f6fae; --accent-ink:#ffffff; --good:#17804a; --bad:#b4372c; --chip:#e8eef5;
+  --f-sans:"IBM Plex Sans","IBM Plex Sans KR",system-ui,-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f141b; --panel:#171e28; --ink:#e4eaf1; --muted:#93a1b2; --line:#2a3442;
+  --accent:#4fa8e0; --accent-ink:#06121c; --good:#4cc283; --bad:#ef7a6e; --chip:#212b38; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0f141b; --panel:#171e28; --ink:#e4eaf1; --muted:#93a1b2; --line:#2a3442;
+  --accent:#4fa8e0; --accent-ink:#06121c; --good:#4cc283; --bad:#ef7a6e; --chip:#212b38; color-scheme:dark}
+*{box-sizing:border-box}
+.wrap>*,header>*,.main>*,.side>*{min-width:0}
+.plot .cv{align-self:start}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-sans);font-size:14px;line-height:1.5;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding-block:20px 40px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;gap:16px}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px}
+h1{font-size:22px;font-weight:600;margin:0;text-wrap:balance;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:2px 0 0;font-size:13px}
+.label{font-size:11.5px;letter-spacing:.02em;color:var(--muted);font-weight:500}
+.mono,.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--chip);border-radius:999px;padding:3px 10px;font-size:12px;max-width:100%}
+.dot{flex:none}
+.chip.good{color:var(--good)} .chip.bad{color:var(--bad)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.model{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-start}
+.controls{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px 20px;align-items:center}
+.re-row{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.re-big{font-family:var(--f-mono);font-size:30px;font-weight:500;min-width:5.5ch;font-variant-numeric:tabular-nums}
+.re-big small{font-size:14px;color:var(--muted);margin-right:4px;font-family:var(--f-sans)}
+input[type=range]{flex:1 1 260px;accent-color:var(--accent);min-width:0}
+input[type=number]{width:92px;font:inherit;font-family:var(--f-mono);padding:6px 8px;border:1px solid var(--line);border-radius:4px;background:var(--bg);color:var(--ink)}
+.btns{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+button,.filebtn{font:inherit;font-size:13px;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:4px;padding:6px 11px;cursor:pointer}
+button:hover,.filebtn:hover{border-color:var(--accent)}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:focus-visible,.filebtn:focus-within,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.filebtn input{position:absolute;opacity:0;width:1px;height:1px}
+.filebtn{position:relative}
+label.tog{display:inline-flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.main{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:16px}
+.fieldhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.fieldhead h2{font-size:15px;margin:0;font-weight:600}
+.fieldhead h3{font-size:13px;margin:0;font-weight:600}
+.plot{display:grid;grid-template-columns:auto minmax(0,1fr) auto;grid-template-rows:minmax(0,1fr) auto;gap:4px 6px;align-items:stretch}
+.yax{display:flex;flex-direction:column;justify-content:space-between;font-family:var(--f-mono);font-size:10px;color:var(--muted);text-align:right;padding-block:0}
+.xax{grid-column:2;display:flex;justify-content:space-between;font-family:var(--f-mono);font-size:10px;color:var(--muted)}
+.cv{position:relative;aspect-ratio:1;max-width:100%;width:100%}
+.cv canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:auto;border-radius:2px}
+.cbar{display:grid;grid-template-columns:14px auto;gap:5px;min-height:0}
+.cbar canvas{width:14px;height:100%;border-radius:2px}
+.cticks{display:flex;flex-direction:column;justify-content:space-between;font-family:var(--f-mono);font-size:10px;color:var(--muted);white-space:nowrap}
+.cunit{font-size:11px;color:var(--muted);margin-top:6px}
+.lid{height:6px;border-radius:2px;margin-bottom:4px;background:repeating-linear-gradient(90deg,var(--accent) 0 10px,transparent 10px 16px);opacity:.75}
+.lidrow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:6px}
+.lidtxt{font-size:11px;color:var(--muted);grid-column:2;display:flex;justify-content:space-between}
+.side{display:grid;gap:12px;align-content:start}
+.mini .plot{grid-template-columns:minmax(0,1fr) auto;grid-template-rows:auto}
+.minirow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px 14px;margin-top:12px}
+.readout div{display:flex;flex-direction:column}
+.readout .num{font-size:15px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px 14px}
+.stats .num{font-size:15px}
+.pins{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.pin{display:grid;gap:4px}
+.pin .cv{border:1px solid var(--line)}
+.pin .cap{display:flex;justify-content:space-between;align-items:center;font-size:12px}
+.pin button{padding:2px 7px;font-size:11px}
+.sharedbar{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);flex-wrap:wrap}
+.sharedbar canvas{width:180px;height:10px;border-radius:2px}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-family:var(--f-mono);font-size:12px;font-variant-numeric:tabular-nums}
+th,td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+th{font-family:var(--f-sans);font-weight:500;color:var(--muted);font-size:12px}
+td.ok{color:var(--good)} td.ng{color:var(--bad)}
+.note{color:var(--muted);font-size:12.5px;max-width:75ch;margin:0}
+.drop{outline:2px dashed var(--accent);outline-offset:4px}
+.err{color:var(--bad);font-size:13px}
+.author{font-size:15px;margin:2px 0 4px}.author strong{font-weight:600;color:var(--accent)}
+.trainbar{grid-column:1/-1;position:relative;height:22px;margin-top:-6px}
+.trainbar::before{content:"";position:absolute;left:0;right:0;top:3px;height:4px;border-radius:2px;background:repeating-linear-gradient(90deg,var(--bad) 0 6px,transparent 6px 10px);opacity:.55}
+.tb-in{position:absolute;left:0;width:28.57%;top:3px;height:4px;border-radius:2px;background:var(--good)}
+.tb-lbl{position:absolute;top:8px;font-size:11px;color:var(--muted);white-space:nowrap}.tb-l1{left:0}.tb-l2{left:29.5%}
+.chip.warn{color:var(--bad)}
+.seg{display:inline-flex;flex-wrap:wrap;gap:4px}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.seg button.ext{border-style:dashed}
+.cmpgrid{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:16px;margin-top:12px;align-items:start}
+.pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto;gap:10px}
+.errwrap{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+.pair .cv,.errwrap .cv{border:1px solid var(--line)}
+.cmpcol h3{font-size:13px;margin:0 0 6px;font-weight:600;display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap}
+.cmpcol h3 .label{font-weight:400}
+.cbar.tall{grid-template-columns:14px auto;height:100%;padding-top:27px}
+.cbar.tall canvas{height:100%}
+.charts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin-top:14px}
+.chart canvas{width:100%;height:220px;display:block}
+.legend{display:flex;gap:12px;font-size:11.5px;color:var(--muted);flex-wrap:wrap;margin-top:4px}
+.legend i{display:inline-block;width:18px;height:0;border-top:2px solid;vertical-align:middle;margin-right:4px}
+.cmpstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 14px;margin-top:14px}
+.cmpstats div{display:flex;flex-direction:column}.cmpstats .num{font-size:15px}
+@media (max-width:860px){.cmpgrid{grid-template-columns:minmax(0,1fr)}.charts{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:520px){.pair{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.pair .cbar{grid-column:1/-1;grid-template-columns:minmax(0,1fr);padding-top:0;height:auto}.pair .cbar canvas{width:100%;height:12px}.pair .cbar .cticks{flex-direction:row-reverse;}}
+details summary{cursor:pointer;font-weight:600;font-size:14px}
+@media (max-width:860px){.main{grid-template-columns:minmax(0,1fr)}.controls{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:520px){.minirow{grid-template-columns:minmax(0,1fr)}.re-big{font-size:24px}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="wrap" id="app">
+  <header>
+    <div>
+      <div class="label">Week 9 · Activity 7 추가점수 · 공개 웹사이트 과제</div>
+      <div class="author">제작: <strong>이도균</strong></div>
+      <h1>Lid-driven cavity 유동장 신경망 예측 · 외삽 비교</h1>
+      <p class="sub">입력 (x, y, Re) → MLP → 출력 (u, v, p). Re를 바꾸면 브라우저가 50×50 셀 중심 2,500점에 대해 신경망 순전파만 다시 계산합니다.</p>
+    </div>
+    <div class="model">
+      <span class="chip" id="srcChip"><span class="dot"></span><span id="srcTxt">모델 없음</span></span>
+      <span class="chip" id="verChip"><span class="dot"></span><span id="verTxt">검증 대기</span></span>
+      <label class="filebtn" for="file">모델 JSON 불러오기<input type="file" id="file" accept=".json,application/json"></label>
+    </div>
+  </header>
+
+  <section class="panel controls" aria-label="Reynolds 조절">
+    <div class="re-row">
+      <div class="re-big"><small>Re</small><span id="reTxt">137</span></div>
+      <input type="range" id="reSlider" min="20" max="1000" step="0.5" value="137" aria-label="Reynolds number">
+      <input type="number" id="reNum" min="20" max="1000" step="0.1" value="137" aria-label="Reynolds number 직접 입력">
+    </div>
+    <div class="trainbar" aria-hidden="true"><span class="tb-in"></span><span class="tb-lbl tb-l1">학습 범위 20–300</span><span class="tb-lbl tb-l2">외삽 300–1000</span></div>
+    <div class="btns">
+      <span class="label">빠른 선택</span>
+      <button data-re="20">20</button><button data-re="100">100</button><button data-re="137">137</button><button data-re="210.5">210.5</button><button data-re="300">300</button><button data-re="500">500</button><button data-re="750">750</button><button data-re="1000">1000</button>
+      <span class="chip" id="regimeChip"><span class="dot"></span><span id="regimeTxt">학습 범위 내 (보간)</span></span>
+      <button class="primary" id="pinBtn">현재 Re 비교에 추가</button>
+    </div>
+    <div class="btns" style="grid-column:1/-1">
+      <label class="tog"><input type="checkbox" id="stream" checked> 유선(streamline) 표시</label>
+      <label class="tog"><input type="checkbox" id="smooth" checked> 셀 사이 부드럽게</label>
+      <label class="tog"><input type="checkbox" id="fixScale" checked> 속도 색범위 0–1 고정</label>
+      <span class="chip mono" id="timing">—</span>
+    </div>
+  </section>
+
+  <section class="main">
+    <div class="panel">
+      <div class="fieldhead">
+        <h2>속도 크기 |u| = √(u² + v²) / U<sub>lid</sub></h2>
+        <span class="label" id="mainRe">Re = 137</span>
+      </div>
+      <div class="lidrow"><span></span><div><div class="lid"></div></div><span></span>
+        <div class="lidtxt"><span>윗벽 lid: u = U<sub>lid</sub> = 1 →</span><span>나머지 벽: no-slip</span></div></div>
+      <div class="plot">
+        <div class="yax"><span>1.0</span><span>0.5</span><span>0.0</span></div>
+        <div class="cv" id="mainWrap"><canvas id="mainCv" width="600" height="600" aria-label="속도 크기 유동장"></canvas><canvas id="streamCv" width="600" height="600" aria-hidden="true"></canvas></div>
+        <div class="cbar"><canvas id="mainBar" width="14" height="256"></canvas><div class="cticks" id="mainTicks"></div></div>
+        <div class="xax"><span>0.0</span><span>x / L = 0.5</span><span>1.0</span></div>
+      </div>
+      <div class="cunit">세로축 y / L · 컬러바 단위 |u| / U<sub>lid</sub> (무차원) · 그림 위에 마우스를 올리면 해당 셀 값이 아래에 표시됩니다</div>
+      <div class="readout" id="readout">
+        <div><span class="label">커서 위치 (x, y)</span><span class="num" id="rXY">—</span></div>
+        <div><span class="label">u / U<sub>lid</sub></span><span class="num" id="rU">—</span></div>
+        <div><span class="label">v / U<sub>lid</sub></span><span class="num" id="rV">—</span></div>
+        <div><span class="label">p / (ρU<sub>lid</sub>²)</span><span class="num" id="rP">—</span></div>
+        <div><span class="label">|u| / U<sub>lid</sub></span><span class="num" id="rS">—</span></div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <div class="fieldhead"><h2>현재 예측 요약</h2><span class="label">2,500 셀 중심</span></div>
+        <div class="stats">
+          <div><span class="label">최대 |u| (셀 중심)</span><div class="num" id="sMax">—</div></div>
+          <div><span class="label">1차 와류 중심 (x, y)</span><div class="num" id="sVort">—</div></div>
+          <div><span class="label">u 범위</span><div class="num" id="sU">—</div></div>
+          <div><span class="label">v 범위</span><div class="num" id="sV">—</div></div>
+          <div><span class="label">p 범위</span><div class="num" id="sP">—</div></div>
+          <div><span class="label">중심선 x=0.51의 최소 u</span><div class="num" id="sUmin">—</div></div>
+        </div>
+      </div>
+      <div class="panel mini">
+        <div class="fieldhead"><h2>성분별 예측</h2><span class="label">색범위: 현재 예측의 ±최대값</span></div>
+        <div class="minirow" id="minis"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" id="extrap" aria-label="외삽 비교">
+    <div class="fieldhead">
+      <h2>외삽 비교 · 같은 Re에서 CFD 기준 결과 vs AI 예측</h2>
+      <span class="chip" id="cmpChip"><span class="dot"></span><span id="cmpChipTxt">CFD 기준 데이터 불러오는 중…</span></span>
+    </div>
+    <p class="note">AI 모델은 Re = 20–300의 CFD 50개 조건(학습 40 · 테스트 10)으로만 학습했고, 이 페이지에서도 재학습하지 않습니다. 아래 CFD 결과는 수업 노트북과 같은 MAC 솔버(50×50 엇갈림 격자, 같은 수렴 조건)로 새로 계산한 <b>확인용 기준값</b>이며 학습에는 쓰지 않았습니다. 왼쪽 두 그림은 같은 물리량을 <b>같은 컬러바 범위</b>로 그립니다.</p>
+    <div style="display:grid;gap:10px;margin-top:12px">
+      <div class="btns"><span class="label" style="min-width:5.5em">Reynolds 수</span><div class="seg" id="cmpRes"></div></div>
+      <div class="btns"><span class="label" style="min-width:5.5em">물리량</span><div class="seg" id="cmpQs">
+        <button data-q="s" aria-pressed="true">|u| 속도 크기</button><button data-q="u" aria-pressed="false">u</button><button data-q="v" aria-pressed="false">v</button><button data-q="p" aria-pressed="false">p 압력</button></div>
+        <button id="cmpToMain">이 Re를 위 메인 그림에 표시</button></div>
+      <p class="note" style="font-size:11.5px">실선 테두리 버튼 = 학습 범위 안(보간 참고용) · 점선 테두리 버튼 = 학습 범위 밖(외삽)</p>
+    </div>
+    <div class="cmpgrid">
+      <div class="pair">
+        <div class="cmpcol"><h3><span>CFD 기준 결과</span><span class="label num" id="cmpReA">—</span></h3>
+          <div class="cv"><canvas id="cmpCfd" width="400" height="400" aria-label="CFD 결과"></canvas><canvas id="cmpCfdS" width="400" height="400" aria-hidden="true"></canvas></div></div>
+        <div class="cmpcol"><h3><span>AI 예측 (MLP)</span><span class="label num" id="cmpReB">—</span></h3>
+          <div class="cv"><canvas id="cmpNn" width="400" height="400" aria-label="AI 예측"></canvas><canvas id="cmpNnS" width="400" height="400" aria-hidden="true"></canvas></div></div>
+        <div class="cbar tall"><canvas id="cmpBar" width="14" height="256"></canvas><div class="cticks" id="cmpTicks"></div></div>
+      </div>
+      <div class="errwrap">
+        <div class="cmpcol"><h3><span>|AI − CFD| 오차</span><span class="label">별도 색범위</span></h3>
+          <div class="cv"><canvas id="cmpErrCv" width="400" height="400" aria-label="절대오차"></canvas></div></div>
+        <div class="cbar tall"><canvas id="cmpErrBar" width="14" height="256"></canvas><div class="cticks" id="cmpErrTicks"></div></div>
+      </div>
+    </div>
+    <div class="cunit" id="cmpUnit">컬러바 단위: 무차원 · 가로축 x / L, 세로축 y / L, 윗벽이 lid</div>
+    <div class="cmpstats">
+      <div><span class="label">RMSE (선택 물리량)</span><span class="num" id="cRmse">—</span></div>
+      <div><span class="label">최대 절대오차</span><span class="num" id="cMax">—</span></div>
+      <div><span class="label">상대 RMSE (÷ CFD 값 범위)</span><span class="num" id="cRel">—</span></div>
+      <div><span class="label">최대 |u| · CFD / AI</span><span class="num" id="cSpd">—</span></div>
+      <div><span class="label">1차 와류 중심 · CFD</span><span class="num" id="cVc">—</span></div>
+      <div><span class="label">1차 와류 중심 · AI</span><span class="num" id="cVn">—</span></div>
+    </div>
+    <div class="charts">
+      <div class="chart"><div class="fieldhead"><h3>수직 중심선 x = 0.5의 u(y)</h3></div><canvas id="chU" aria-label="수직 중심선 u 분포"></canvas>
+        <div class="legend"><span><i style="border-color:var(--ink)"></i>CFD</span><span><i style="border-color:var(--accent);border-top-style:dashed"></i>AI</span></div></div>
+      <div class="chart"><div class="fieldhead"><h3>수평 중심선 y = 0.5의 v(x)</h3></div><canvas id="chV" aria-label="수평 중심선 v 분포"></canvas>
+        <div class="legend"><span><i style="border-color:var(--ink)"></i>CFD</span><span><i style="border-color:var(--accent);border-top-style:dashed"></i>AI</span></div></div>
+      <div class="chart"><div class="fieldhead"><h3>Re에 따른 RMSE (<span id="chEq">|u|</span>)</h3></div><canvas id="chE" aria-label="Re에 따른 오차"></canvas>
+        <div class="legend"><span><i style="border-color:var(--good);border-top-width:6px;opacity:.35"></i>학습 범위 20–300</span><span><i style="border-color:var(--bad)"></i>AI vs CFD RMSE</span></div></div>
+    </div>
+    <p class="note" style="margin-top:12px">Re가 300을 넘으면 실제 유동(CFD)에서는 1차 와류 중심이 공동 중앙 쪽으로 내려오고 lid 아래 경계층이 얇아집니다. 이 영역은 학습 데이터에 없으므로 AI가 이런 변화를 얼마나 따라가는지, 오차가 Re와 함께 어떻게 커지는지를 위 그림과 그래프로 확인할 수 있습니다.</p>
+    <p class="err" id="cmpErr" hidden></p>
+  </section>
+
+  <section class="panel">
+    <div class="fieldhead">
+      <h2>Reynolds 조건 비교 (AI 예측만)</h2>
+      <div class="sharedbar"><span>공통 색범위 |u|/U<sub>lid</sub></span><span class="num">0</span><canvas id="pinBar" width="180" height="10"></canvas><span class="num">1</span></div>
+    </div>
+    <div class="pins" id="pins"></div>
+    <p class="note" style="margin-top:10px">각 그림은 추가하는 순간 같은 신경망으로 새로 계산한 결과입니다. Re가 커질수록 관성이 커져 1차 와류 중심이 lid 쪽에서 공동 중앙 쪽으로 내려오는지, 아래 두 모서리의 2차 와류가 커지는지 보세요.</p>
+  </section>
+
+  <section class="panel">
+    <div class="fieldhead"><h2>Python 예측값과 비교 (verification)</h2><span class="chip" id="verChip2"><span class="dot"></span><span id="verTxt2">—</span></span></div>
+    <div class="tablewrap"><table id="verTable"><thead><tr><th>x</th><th>y</th><th>Re</th><th>u (JS)</th><th>v (JS)</th><th>p (JS)</th><th>max |JS − Python|</th></tr></thead><tbody></tbody></table></div>
+  </section>
+
+  <details class="panel">
+    <summary>계산 방식</summary>
+    <div style="display:grid;gap:8px;margin-top:10px">
+      <p class="note">1. 정규화: z₀ = ([x, y, Re] − input_mean) / input_std</p>
+      <p class="note">2. 각 층: z ← W·z + b (Linear) 후 활성화 함수 (Tanh / ReLU / LeakyReLU / Sigmoid, JSON의 layers 순서 그대로)</p>
+      <p class="note">3. 역정규화: [u, v, p] = z_out · output_std + output_mean</p>
+      <p class="note">4. 50×50 셀 중심 x, y = (index + 0.5)/50, 행은 y가 증가하는 순서. Re를 바꿀 때 CFD 계산·재학습·저장 그림·CFD 보간은 하지 않습니다. 유선은 신경망이 예측한 u, v 격자를 따라 그립니다.</p>
+      <p class="note" id="layerInfo"></p>
+      <p class="err" id="errMsg" hidden></p>
+    </div>
+  </details>
+</div>
+
+<script id="embedded-model" type="application/json">{"format":"week9-mlp-v1","dataset":"week9-mac50-re20to300-v1","input_order":["x","y","Re"],"output_order":["u","v","p"],"input_mean":[0.5000000000000001,0.49999999999999817,159.96428571429848],"input_std":[0.28861739379327583,0.2886173937932743,82.56505629143906],"output_mean":[-4.919953333626381e-18,-1.61481938931729e-17,-1.1479706074624119e-18],"output_std":[0.20351367286572686,0.1461801598669687,0.10392393473590451],"layers":[{"type":"Linear","weight":[[0.23339368402957916,0.8807542324066162,0.15754735469818115],[-0.39503124356269836,-0.18619707226753235,0.979797899723053],[-0.8357645869255066,0.8722475171089172,0.005388797726482153],[0.3235776424407959,0.16200856864452362,-0.3639379143714905],[-0.7569373846054077,-0.11100330203771591,0.11111156642436981],[0.33723214268684387,0.7502335906028748,0.187981978058815],[0.30754023790359497,0.9464717507362366,-0.14523255825042725],[-0.5682784914970398,0.06704379618167877,-1.0069305896759033],[-0.8251543641090393,0.014515021815896034,0.06101469323039055],[0.6125021576881409,0.10030069947242737,-0.04302606359124184],[0.21151208877563477,-0.8036984205245972,-0.049481648951768875],[-0.9436795115470886,0.45997554063796997,-0.23297078907489777],[0.8401534557342529,-1.0127248764038086,-0.2686904966831207],[-0.742000162601471,-0.9069493412971497,-0.12323770672082901],[-0.37734946608543396,0.5649181604385376,-0.01008820440620184],[0.44975826144218445,-0.7910915017127991,-0.1672936975955963],[-0.0429302379488945,0.9756751656532288,-0.08263276517391205],[-0.02354208193719387,-1.015468955039978,0.06357525289058685],[-0.44801539182662964,0.05269405618309975,0.7737528085708618],[-1.1925522089004517,1.1957818269729614,-0.1176467314362526],[0.330742746591568,-0.12993592023849487,0.4093043804168701],[-0.5635495781898499,0.001715589314699173,-0.14207354187965393],[-0.6447603106498718,-1.0410903692245483,0.31234920024871826],[-0.8655629754066467,0.14727528393268585,0.013555319979786873],[0.40336301922798157,0.527825117111206,-0.04880930855870247],[1.1259537935256958,1.1624337434768677,0.2867967486381531],[0.0410689078271389,-0.9965876936912537,0.07768406718969345],[0.8212223649024963,-0.267702579498291,-0.018208948895335197],[0.8609174489974976,-0.04334983229637146,-0.11528829485177994],[-0.4886895418167114,0.08613210916519165,-0.1959855556488037],[-1.2281397581100464,1.145300030708313,0.24692533910274506],[0.6095206141471863,0.0111541748046875,0.5107104778289795]],"bias":[-1.3765325546264648,1.1125730276107788,-0.4901118576526642,-1.2982258796691895,1.3418422937393188,0.20581653714179993,-0.868040919303894,-0.9739289879798889,1.2171809673309326,-1.0380455255508423,1.3085142374038696,0.8080225586891174,-0.4551098644733429,0.6591651439666748,-0.0508895143866539,1.3560898303985596,-1.512040138244629,1.5859812498092651,-0.5081812739372253,0.3975306749343872,1.295096755027771,-1.009863257408142,0.4291384220123291,1.0073277950286865,-1.331815481185913,0.11104226857423782,1.5470291376113892,-0.6632816791534424,1.1115593910217285,-1.1456676721572876,0.08667215704917908,-0.9439212083816528]},{"type":"Tanh"},{"type":"Linear","weight":[[-0.7398126125335693,-0.40881454944610596,0.5052676200866699,-0.8900759220123291,1.103167176246643,-0.005189431831240654,0.009193417616188526,-0.9433121085166931,1.055751919746399,-0.7842485308647156,0.07899022847414017,0.42625176906585693,0.1754622459411621,0.051009535789489746,-0.09710382670164108,-0.06079864501953125,-0.7593245506286621,0.6943641901016235,-0.49594178795814514,-0.34296998381614685,0.17778313159942627,0.11583960056304932,-0.11156773567199707,0.895513653755188,-0.8504499793052673,0.24043744802474976,0.6616756916046143,-0.39526432752609253,0.04959074407815933,-0.10010325908660889,0.40138617157936096,-0.25842854380607605],[0.11037147790193558,0.22716012597084045,0.457293838262558,-0.4226941168308258,0.2015719711780548,-0.23580920696258545,0.20049987733364105,0.05606107413768768,-0.007390794809907675,0.049420908093452454,-0.2262851893901825,-0.10983673483133316,0.2038601189851761,-0.38416939973831177,-0.2324473261833191,-0.4086064100265503,0.08758118003606796,0.09603509306907654,0.13686193525791168,0.04755230247974396,0.26800093054771423,0.18258652091026306,0.15284447371959686,0.03169164061546326,-0.06581995636224747,-0.09083569794893265,-0.15379656851291656,-0.19962146878242493,-0.1493830531835556,-0.1509203165769577,0.3640711009502411,0.08499574661254883],[0.947850227355957,0.38965174555778503,-0.2665872275829315,1.2821285724639893,-1.5399643182754517,-0.194125697016716,0.4726940393447876,0.6482672691345215,-1.3613355159759521,1.3952707052230835,-0.5874043703079224,-1.0446388721466064,-0.03245386481285095,-0.38743162155151367,0.25288867950439453,0.026691263541579247,1.5175377130508423,-1.3264158964157104,0.43025097250938416,0.16929660737514496,-0.6659489870071411,0.19740629196166992,0.23232553899288177,-1.6494992971420288,1.4223148822784424,-0.1324123591184616,-1.4596734046936035,0.9823051691055298,-0.030166272073984146,0.23558051884174347,-0.31851282715797424,0.7216678857803345],[0.45663177967071533,-0.32519346475601196,-0.20337502658367157,-0.1347111314535141,0.25854626297950745,0.5190771222114563,0.3141278624534607,0.018955305218696594,0.18199266493320465,0.10285167396068573,-0.5269313454627991,-0.5077023506164551,-0.017089808359742165,-0.3655857443809509,0.03998441621661186,0.24524655938148499,0.9468266367912292,-1.0204508304595947,-0.08290237933397293,-0.387983500957489,-0.2669074833393097,-0.06612453609704971,-0.7449885010719299,0.0030722636729478836,0.04952836409211159,0.9975517988204956,-0.9739781618118286,0.13418857753276825,-0.07546122372150421,0.039665818214416504,-0.5595793128013611,0.1319706290960312],[-0.8115839958190918,0.39627665281295776,0.051614440977573395,-0.024426152929663658,-0.15142542123794556,-0.07676190882921219,-0.7149257659912109,-0.0036139357835054398,-0.16195496916770935,-0.18784457445144653,0.4434821307659149,0.017382768914103508,-0.21215477585792542,0.5605824589729309,-0.010856837965548038,-0.10797048360109329,-0.6366387605667114,0.859302282333374,0.4351174235343933,0.30443358421325684,-0.4926281273365021,0.6997319459915161,0.410138875246048,0.09381318837404251,-0.1395610272884369,-0.7212405204772949,0.3731189966201782,0.003392943413928151,-0.6899685263633728,0.5973929762840271,0.005752552766352892,-0.07826801389455795],[0.42884135246276855,-0.1574491411447525,-0.025798697024583817,-0.3261682987213135,0.1369326412677765,-0.09939999133348465,0.40884673595428467,0.01463235542178154,0.10389582067728043,0.16358330845832825,0.06136953830718994,-0.25265324115753174,0.07812364399433136,-0.4328773319721222,-0.09415805339813232,-0.04765598848462105,0.387487530708313,-0.43927469849586487,-0.16903626918792725,-0.3116960823535919,0.1194993183016777,-0.220491424202919,-0.15597790479660034,-0.1270115077495575,0.024751320481300354,0.10272163152694702,-0.4420228898525238,0.22403812408447266,0.6137853264808655,-0.46313589811325073,0.10234341770410538,0.3305296003818512],[0.3938885033130646,1.023323655128479,0.11507900804281235,-0.2905081808567047,0.026047494262456894,-0.036022529006004333,-0.4071134626865387,0.558834969997406,-0.18188203871250153,0.035173702985048294,0.2733686864376068,0.24042773246765137,0.011370391584932804,-0.2862701714038849,0.2434951215982437,0.09522773325443268,-0.38742706179618835,0.2385082244873047,0.36970964074134827,0.15028664469718933,1.3247826099395752,-0.95681232213974,0.55595862865448,0.16676153242588043,0.16121789813041687,1.0867846012115479,0.5814005732536316,0.0729372575879097,0.4316047132015228,-1.2504932880401611,-0.08249522000551224,-0.46549713611602783],[-1.0122336149215698,-0.14035312831401825,0.09508901089429855,-1.6991816759109497,1.2214555740356445,-0.02401628904044628,-0.40379223227500916,-0.7484311461448669,0.7690452933311462,-0.6707251667976379,0.24514076113700867,0.46123409271240234,-0.18779902160167694,0.10034794360399246,0.00902722217142582,0.1584603190422058,-1.13018798828125,0.9635999798774719,-0.4475053548812866,-0.1034061461687088,0.5798549056053162,0.07414992898702621,-0.12521404027938843,1.2192496061325073,-0.86124187707901,-0.01883605308830738,1.14407479763031,-0.41153427958488464,-0.0889282152056694,-0.255385160446167,0.5864884853363037,-0.4799432158470154],[0.012730051763355732,-0.09526628255844116,-0.2636227011680603,-0.2590218186378479,0.4644063413143158,0.19337214529514313,0.3539658188819885,-0.04317394644021988,0.3928576707839966,-0.05699890851974487,0.571686863899231,-0.13967424631118774,0.22542265057563782,-0.6048539876937866,-0.1944003850221634,0.7377344369888306,0.0496368445456028,-0.04790368303656578,-0.5069398880004883,0.0275446567684412,0.7507134675979614,-0.84076988697052,-0.6466826796531677,0.28736862540245056,-0.25110921263694763,0.6835665106773376,-0.045934196561574936,0.06475260108709335,1.342029094696045,-1.1778508424758911,-0.011227894574403763,-0.02999492734670639],[0.4976450204849243,0.11148121953010559,0.20137237012386322,0.291503369808197,-0.026199379935860634,0.173398956656456,0.41859325766563416,-0.46437835693359375,-0.2616546154022217,0.06777149438858032,-1.0868632793426514,-0.21022778749465942,0.12246518582105637,0.6286919713020325,0.24325621128082275,-0.8525810837745667,1.553449034690857,-1.961839199066162,1.2540675401687622,-0.2785167694091797,-1.7576957941055298,2.2460968494415283,-0.051009755581617355,-0.27641594409942627,-0.04392658919095993,-0.9719472527503967,-1.6610045433044434,0.017873434349894524,-2.603394031524658,2.497300624847412,-0.05973456799983978,0.3894334137439728],[0.4797561764717102,0.22024616599082947,0.0580572634935379,0.2307099997997284,0.009817283600568771,0.18866696953773499,0.06274844706058502,0.22759492695331573,0.04993610084056854,-0.026823747903108597,0.18997816741466522,0.23137764632701874,-0.3532702326774597,0.1463409662246704,0.5099446773529053,-0.12433168292045593,0.6273813247680664,-0.8287847638130188,0.3174990713596344,0.8955790996551514,-0.14752256870269775,0.002235658932477236,0.16234995424747467,0.04438718035817146,0.37352657318115234,0.013806618750095367,-0.698897123336792,0.02922956645488739,0.060959529131650925,-0.05629037693142891,0.3229668438434601,-0.33976101875305176],[0.7880626320838928,0.3733047842979431,0.3142375946044922,0.6127429008483887,-0.6788765788078308,0.34166091680526733,0.49525508284568787,0.30704569816589355,-0.3366214632987976,0.40118712186813354,-1.0212093591690063,0.008612834848463535,0.3298104405403137,-0.2310636192560196,0.34318968653678894,-1.0495147705078125,1.5037411451339722,-1.2656971216201782,0.5087089538574219,-0.07585825771093369,-0.11210396140813828,0.13462722301483154,-0.131902813911438,-0.39893847703933716,0.5345125198364258,0.6115304827690125,-1.3940019607543945,0.17641061544418335,-0.33035749197006226,-0.0023885658010840416,-0.22721819579601288,-0.12049559503793716],[-0.2710030972957611,-0.05157912150025368,0.1349375694990158,0.0599740594625473,-0.247433140873909,0.7786272764205933,-0.03175811842083931,-0.10337083786725998,-0.08412312716245651,0.11450642347335815,-0.08123728632926941,-0.017396941781044006,-0.2893906831741333,0.04961257800459862,0.28630539774894714,0.471028208732605,-0.07179860025644302,0.02611245959997177,-0.17789669334888458,-0.07014443725347519,0.04192836955189705,-0.22864411771297455,-0.17780783772468567,-0.16269269585609436,-0.10034593939781189,-0.1440914422273636,0.08632930368185043,0.009001988917589188,0.3572271168231964,-0.11956951767206192,0.0792032852768898,0.22782373428344727],[0.12317664921283722,-0.4212990403175354,0.19556395709514618,-0.25748199224472046,0.26638156175613403,-0.26861056685447693,0.14656493067741394,-0.30725228786468506,0.014176510274410248,-0.22010919451713562,-0.004383568186312914,-0.2869843542575836,0.5411501526832581,-0.4233039617538452,-0.3944873809814453,-0.3395534157752991,-0.013918591663241386,-0.16492505371570587,-0.1722034066915512,-0.6211409568786621,-0.21473383903503418,0.09431679546833038,-0.2899496853351593,0.10969885438680649,-0.28165948390960693,-0.27478983998298645,0.16393791139125824,-0.2212134450674057,0.400615394115448,0.1350918412208557,0.41610389947891235,0.1930190920829773],[-0.06822138279676437,-0.43931806087493896,-0.12339834123849869,0.09530378133058548,0.298877477645874,0.2745250463485718,0.15607570111751556,-0.44486063718795776,-0.20703864097595215,-0.0224772896617651,-0.5130122900009155,-0.11633150279521942,-0.035071633756160736,0.26397383213043213,0.15949144959449768,-0.2082393318414688,0.6971632838249207,-0.4300066828727722,-0.024888603016734123,-0.11408421397209167,-1.2783892154693604,1.0985373258590698,-0.231429323554039,-0.17221084237098694,-0.23895424604415894,-0.41756799817085266,-0.644845724105835,-0.14187325537204742,-0.9983291625976562,1.0512785911560059,-0.47331902384757996,0.2751240134239197],[-0.01912287063896656,0.14881552755832672,0.24275848269462585,0.28199532628059387,-0.051210470497608185,-0.3248428404331207,-0.588148295879364,0.3063124418258667,-0.22512286901474,-0.13550840318202972,0.3446381986141205,0.0824485644698143,-0.14138033986091614,0.07182365655899048,0.1679997742176056,-0.00036931864451617,-0.2685371935367584,0.13587942719459534,0.3190924823284149,-0.022387076169252396,-0.05261806771159172,-0.1378655731678009,0.5521019101142883,0.06467931717634201,-0.0288500115275383,-0.37114793062210083,0.4205946624279022,0.047711391001939774,-0.12918351590633392,0.006811029743403196,-0.21889245510101318,0.07640925794839859],[0.25946924090385437,0.044009048491716385,-0.4777921140193939,0.5519203543663025,-0.8793293237686157,-0.18646730482578278,0.2458724081516266,-0.027689680457115173,-0.7118368148803711,0.677201509475708,0.4392521381378174,-0.6387162208557129,0.14403894543647766,-0.15389057993888855,-0.24790853261947632,0.5289466977119446,-0.1697307676076889,-0.04174907132983208,0.14037099480628967,-0.5198585987091064,-0.2395193874835968,-0.17269586026668549,-0.01439345721155405,-0.685133695602417,0.6630028486251831,-0.6308198571205139,0.23928453028202057,0.5074288249015808,0.03766850754618645,0.004762372467666864,-0.6791270971298218,0.5044263601303101],[-0.32903456687927246,-0.6932294964790344,0.022857779636979103,0.43362683057785034,-0.0522727370262146,-0.17235147953033447,0.43071556091308594,-0.1746370643377304,-0.21433058381080627,-0.02756919525563717,-0.6576100587844849,-0.13865073025226593,0.09784215688705444,0.29559364914894104,-0.0022512790746986866,-0.42423489689826965,0.9239166975021362,-0.7362880706787109,-0.2095518559217453,-0.4946480989456177,-1.8809477090835571,1.033678412437439,-0.5029572248458862,-0.11771687120199203,-0.004481153562664986,-1.2405444383621216,-0.7991957068443298,-0.008509228006005287,-0.9890286922454834,1.77967369556427,0.005770104471594095,0.5022456645965576],[-0.4156462252140045,0.060770321637392044,-0.37621578574180603,0.5645627379417419,-1.0156757831573486,-0.1881769597530365,0.24295870959758759,-0.01788237690925598,-0.729495644569397,0.5852584838867188,0.7831619381904602,-0.39532411098480225,-0.07325636595487595,-0.20188455283641815,-0.24806879460811615,0.5823600888252258,-0.8004947304725647,0.5699476003646851,0.28939226269721985,-0.06717140972614288,-0.14500504732131958,-0.013076278381049633,-0.09586023539304733,-0.7431276440620422,0.07174684852361679,-0.4475315511226654,0.4708383083343506,0.42551568150520325,-0.04190623015165329,-0.14654839038848877,-0.42401039600372314,0.22348128259181976],[0.4180428385734558,-0.3204173743724823,0.3074635863304138,-0.07755749672651291,-0.1419162154197693,0.07420656830072403,0.5620380640029907,-0.30908098816871643,0.008639348670840263,0.05717305839061737,0.18988820910453796,-0.24229352176189423,0.2438250035047531,-0.5828415155410767,-0.02735762670636177,0.0793871209025383,0.09208869934082031,-0.46030014753341675,-0.37361642718315125,-0.04047774896025658,0.5205952525138855,-0.8164215087890625,-0.7821611166000366,-0.1416805237531662,0.11531610041856766,0.31314992904663086,-0.20800353586673737,-0.038418058305978775,0.6504462361335754,-0.8680028319358826,0.10208311676979065,0.04424159601330757],[0.2733919620513916,-0.09081756323575974,-0.15375611186027527,0.7251245975494385,-0.8639119267463684,-0.33917856216430664,0.38798993825912476,-0.0942145511507988,-0.6227132081985474,0.5572550296783447,0.6557391881942749,-0.42458075284957886,0.6912423372268677,-0.006345314439386129,-0.6183806657791138,0.3779613673686981,-0.20059749484062195,-0.04267274960875511,0.19073152542114258,-0.8170867562294006,-0.3425835072994232,-0.047914911061525345,0.24339811503887177,-0.5306294560432434,0.6599648594856262,-0.3441999852657318,0.14144843816757202,0.1789349764585495,-0.07220277935266495,0.08229110389947891,-0.41674014925956726,0.4079010486602783],[0.7714272141456604,0.17388492822647095,0.6194602847099304,0.4659551978111267,-0.32537588477134705,0.15375714004039764,0.5883456468582153,0.5323103070259094,-0.350998193025589,0.4303452968597412,-0.40062907338142395,0.20491519570350647,0.37022364139556885,-0.5437930822372437,-0.0573696568608284,-0.5214220881462097,0.7077392339706421,-0.6972579956054688,0.26468145847320557,-0.04091686010360718,-0.4589162766933441,-0.0677090436220169,-0.18037386238574982,-0.10232075303792953,0.5750865340232849,0.8824357986450195,-0.8261632323265076,-0.12271841615438461,-0.018945913761854172,0.11806701123714447,0.39948680996894836,-0.055293433368206024],[-0.42510172724723816,0.4312407672405243,-0.20536231994628906,0.09042315930128098,-0.01066395454108715,-0.23688296973705292,-0.6168866157531738,0.5767565965652466,-0.22762002050876617,-0.029456473886966705,0.4952705502510071,0.06244998425245285,-0.06617869436740875,0.446925550699234,-0.27948036789894104,0.30215293169021606,-0.6210575699806213,0.5601255297660828,0.4261096119880676,0.3775569796562195,0.30263689160346985,-0.4538772702217102,0.8187817931175232,-0.08373373746871948,0.007341346703469753,0.14557410776615143,0.9786363244056702,-0.13610978424549103,0.14814861118793488,-0.4559449553489685,0.38247501850128174,-0.058090172708034515],[-0.12965276837348938,0.3148340582847595,-0.4789784550666809,0.7224491834640503,-0.5584721565246582,0.01798645593225956,-0.07919617742300034,0.6793541312217712,-0.43350347876548767,0.4256933331489563,0.06802500784397125,0.012993022799491882,0.13176709413528442,-0.24218128621578217,0.052605390548706055,0.37387681007385254,0.4362383484840393,-0.1464470624923706,-0.04606393352150917,0.40346065163612366,-0.6005674004554749,-0.01905752532184124,-0.18909718096256256,-0.30480891466140747,0.5009239315986633,-0.047875382006168365,-0.3827854096889496,0.24997565150260925,-0.16848528385162354,0.17718906700611115,-0.8315154910087585,0.2584962844848633],[-0.5294844508171082,0.24777069687843323,-0.026589563116431236,-0.8344196677207947,0.9982779622077942,-0.20963117480278015,-0.6855780482292175,0.1593754142522812,0.7495008707046509,-0.6009145975112915,-0.11557739973068237,0.805293619632721,-0.5942296981811523,0.2056204229593277,0.4152849316596985,0.366606205701828,0.011591874994337559,0.1276857703924179,-0.12895870208740234,0.8138027787208557,0.5728647112846375,-0.06056379899382591,0.2969914674758911,0.9454221725463867,-0.5697399973869324,0.012978570535779,0.011489144526422024,-0.483014851808548,0.20380963385105133,-0.48209768533706665,0.19077059626579285,-1.252328634262085],[0.1486150324344635,0.3927367925643921,-0.2818101644515991,-0.14668531715869904,0.016481410712003708,-0.23399153351783752,-0.363078773021698,0.22503627836704254,0.038303304463624954,0.13974006474018097,0.23668868839740753,0.04306500032544136,0.024046391248703003,0.08880549669265747,0.09415291994810104,0.33459576964378357,-0.21843478083610535,-0.1445465087890625,0.025945995002985,0.25069767236709595,0.33883407711982727,-0.01869000867009163,0.4607703387737274,-0.22086413204669952,0.23627440631389618,-0.2511773407459259,0.16923744976520538,0.0855068564414978,0.07781938463449478,-0.15857139229774475,-0.3111090064048767,-0.506098747253418],[0.41855546832084656,0.5190998315811157,-0.11801794916391373,-0.20738345384597778,-0.48667025566101074,-0.19563479721546173,-0.17380112409591675,0.5819746255874634,-0.12855827808380127,0.1559194177389145,-0.15402090549468994,0.49009472131729126,0.30356141924858093,0.11509492993354797,0.047228340059518814,0.02965993992984295,0.06102793663740158,-0.20402589440345764,0.493936151266098,0.3985922038555145,0.5004196763038635,-0.2797788381576538,0.4484965205192566,0.08104179054498672,0.516502857208252,0.07576584070920944,-0.20278547704219818,-0.12803462147712708,-0.213134303689003,-0.6251780986785889,0.019440293312072754,-0.5871768593788147],[-0.07672946900129318,-0.12921862304210663,-0.03713839501142502,0.07866857945919037,0.44462600350379944,0.12688440084457397,0.40688928961753845,-0.3092030882835388,0.3482986092567444,-0.029346218332648277,-0.21401551365852356,-0.13827063143253326,-0.41314974427223206,-0.21905846893787384,-0.003483865177258849,0.0282524973154068,-0.20108868181705475,0.2784169316291809,0.07215452939271927,-0.3227432370185852,-0.5034024715423584,0.1539662480354309,-0.5772136449813843,0.031188994646072388,-0.22227491438388824,0.22453173995018005,0.008800110779702663,-0.17708592116832733,-0.014281337149441242,0.383242666721344,-0.3064561188220978,0.21255658566951752],[0.349435031414032,0.2808424234390259,0.26164770126342773,0.20763510465621948,0.06076442077755928,0.09861432015895844,-0.06879550963640213,0.024250231683254242,0.35586902499198914,-0.12923870980739594,-0.679900050163269,0.9505863189697266,-0.026557480916380882,0.130075141787529,-0.02574559859931469,-0.47643372416496277,0.4302120804786682,-0.5266120433807373,-0.004103950224816799,0.26365354657173157,-0.035106759518384933,0.02681383490562439,0.21886278688907623,0.5390801429748535,0.42788195610046387,0.48905158042907715,-0.6807419061660767,-0.5976965427398682,-0.011558287777006626,0.14668291807174683,0.6339736580848694,-0.21867327392101288],[-0.06836910545825958,-0.02188604325056076,0.06460095196962357,-0.1396249234676361,0.3044187128543854,-0.23163840174674988,-0.11331797391176224,0.1395658552646637,0.11063610017299652,-0.05194392427802086,0.761070191860199,-0.03234318271279335,0.04073102027177811,-0.31791627407073975,-0.04578128084540367,0.4732738733291626,-0.6494256854057312,0.4855975806713104,-0.5581772327423096,0.18259462714195251,1.0274876356124878,-0.9866289496421814,0.16194984316825867,0.2544596493244171,0.10392693430185318,0.28934386372566223,0.7852190732955933,0.010792418383061886,1.1571158170700073,-1.3936296701431274,-0.09145685285329819,-0.1611437350511551],[-0.831880509853363,-0.5055682063102722,0.2747296690940857,-0.9788587093353271,1.6771055459976196,0.1847059577703476,-0.1987559199333191,-0.8237473964691162,1.3887100219726562,-1.2693498134613037,0.4884204566478729,0.5252866148948669,0.27528947591781616,0.05108669772744179,-0.23078110814094543,9.515609417576343e-05,-0.9842086434364319,0.8658790588378906,-0.4531010687351227,-0.3962914049625397,0.4273649752140045,-0.1539427936077118,-0.16398176550865173,1.243726372718811,-1.408029556274414,0.152587890625,1.0186270475387573,-0.7762896418571472,0.00252172932960093,-0.1644992232322693,0.6373713612556458,-0.46834906935691833],[1.1957573890686035,-0.5199973583221436,0.3299849033355713,0.38860028982162476,0.16985943913459778,-0.1795034408569336,0.7161126136779785,-0.7876499891281128,0.26512274146080017,0.007445675786584616,-0.5597332715988159,0.18252027034759521,0.09845460206270218,-0.726530134677887,0.04692584276199341,-0.43783724308013916,1.065026044845581,-1.2362885475158691,0.19353744387626648,0.03073166124522686,-0.8479874730110168,0.5135123133659363,-0.2226504236459732,0.07915525138378143,0.3178426921367645,-0.4164988100528717,-0.9604405760765076,-0.04994016885757446,-0.28655382990837097,0.7035179734230042,0.5314032435417175,0.36440202593803406]],"bias":[0.1767982691526413,0.49636295437812805,-0.3850121796131134,0.033777594566345215,-0.005208738148212433,0.3964894115924835,0.41763994097709656,0.3786742687225342,0.4821555018424988,-0.4118020534515381,0.35319867730140686,-0.26375553011894226,-0.24383026361465454,0.33676543831825256,-0.5762607455253601,0.019721338525414467,0.02279123291373253,-0.383378803730011,0.03280288353562355,0.23780380189418793,-0.1821444183588028,-0.29614728689193726,0.04216798394918442,-0.23091675341129303,0.4277094602584839,0.4299192428588867,0.49949419498443604,-0.6551954746246338,-0.4376239478588104,0.3016711473464966,0.2627098858356476,-0.3706192374229431]},{"type":"Tanh"},{"type":"Linear","weight":[[0.5487619042396545,0.6337845325469971,-0.3935900330543518,0.5684053897857666,-0.38195639848709106,0.48947709798812866,0.012647745199501514,-0.20410344004631042,0.09746409952640533,-0.32814744114875793,-0.34452906250953674,1.1324013471603394,-0.5704830884933472,0.9251978397369385,-0.3872970938682556,0.3578667938709259,-0.36352893710136414,0.04416652396321297,-0.5758084654808044,0.3194931149482727,0.5057042241096497,0.7115034461021423,-0.3842376470565796,-0.24502436816692352,0.10925484448671341,0.5687354803085327,0.1774219125509262,-0.5262651443481445,0.611299455165863,0.34218454360961914,0.4239199161529541,0.8071420788764954],[-0.13882482051849365,0.25616687536239624,0.09916933625936508,-0.5730053186416626,0.4106075167655945,-0.2907911241054535,-0.09165605157613754,0.06527593731880188,1.0834174156188965,0.05206522345542908,0.1554265022277832,0.27213722467422485,0.812468945980072,0.7739845514297485,-0.3991144001483917,-0.4272775650024414,-0.9729282855987549,0.16940735280513763,-0.6840342879295349,-0.42749157547950745,1.345827341079712,0.11855193972587585,-0.03039460815489292,0.23118634521961212,-0.9506811499595642,-0.245881587266922,0.0656348243355751,-0.6343719959259033,0.21049563586711884,-0.02851237542927265,-0.11457733809947968,-0.16583546996116638],[-1.5187722444534302,-0.15985333919525146,2.063852071762085,0.19178608059883118,-0.46002665162086487,-0.03030991367995739,1.5791152715682983,-1.6670538187026978,0.20251579582691193,-1.9645768404006958,1.151053547859192,1.1499937772750854,-0.14355230331420898,-0.8491215705871582,-1.3681365251541138,0.016669990494847298,0.6045558452606201,-1.6705965995788574,0.8645190000534058,0.3094164729118347,-0.2815885543823242,0.8644022345542908,0.23075953125953674,1.2801671028137207,0.22366215288639069,0.5407708287239075,1.2596098184585571,-0.8369041085243225,-1.0140235424041748,0.68266761302948,-1.6728440523147583,-1.2662588357925415]],"bias":[0.22289274632930756,0.015472901053726673,0.28815072774887085]}],"reynolds_range":[20,300],"grid":{"n":50,"cell_centers":"(index + 0.5) / 50","row_order":"increasing y"},"units":{"u":"u/U_lid","v":"v/U_lid","p":"p/(rho*U_lid^2)","speed":"sqrt(u^2+v^2)/U_lid"},"verification":{"inputs":[[0.01,0.01,20.0],[0.31,0.57,20.0],[0.51,0.51,20.0],[0.79,0.99,20.0],[0.01,0.01,137.0],[0.31,0.57,137.0],[0.51,0.51,137.0],[0.79,0.99,137.0],[0.01,0.01,300.0],[0.31,0.57,300.0],[0.51,0.51,300.0],[0.79,0.99,300.0]],"outputs":[[0.007187283894372959,-0.010373767547221925,-0.007238177582624913],[-0.14298419452727926,0.1862851989681969,-0.07351855659957876],[-0.1968048558656287,0.021906878178940003,-0.027650490878373322],[0.9235083869930953,0.006757451286011112,0.2479111609901614],[0.004395360195782222,-0.020640454299887392,0.022226161215520783],[-0.09675296581651711,0.19529172214416646,-0.025784455566476416],[-0.19200390191434158,0.05344385269887048,-0.020769609552737753],[0.9102666917369221,0.0058689152891619484,0.020722445777825445],[0.006180172870946659,-0.016712225661990415,0.018291262821077035],[-0.06557556260821368,0.19789240073574044,-0.028098862651850146],[-0.16069398665145262,0.07218373453090492,-0.03667818497705961],[0.8885538322325361,0.007020410124043901,0.014204231209947403]],"absolute_tolerance":1e-05},"settings":{"activation":"Tanh","learning_rate":0.001,"hidden_layers":2,"hidden_nodes":32,"epochs":100}}</script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const N=50;
+let model=null, cur=null, pins=[];
+
+/* ---------- colormaps ---------- */
+const VIRIDIS=[[68,1,84],[72,40,120],[62,74,137],[49,104,142],[38,130,142],[31,158,137],[53,183,121],[109,205,89],[180,222,44],[253,231,37]];
+const COOLWARM=[[59,76,192],[98,130,234],[141,176,254],[184,208,249],[221,221,221],[245,196,173],[244,154,123],[222,96,77],[180,4,38]];
+function cmap(stops,t){t=Math.min(1,Math.max(0,t));const s=t*(stops.length-1),i=Math.min(stops.length-2,Math.floor(s)),f=s-i,a=stops[i],b=stops[i+1];return[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f]}
+function drawBar(cv,stops,vertical){const c=cv.getContext('2d'),w=cv.width,h=cv.height,img=c.createImageData(w,h);for(let y=0;y<h;y++)for(let x=0;x<w;x++){const t=vertical?1-y/(h-1):x/(w-1),col=cmap(stops,t),k=(y*w+x)*4;img.data[k]=col[0];img.data[k+1]=col[1];img.data[k+2]=col[2];img.data[k+3]=255}c.putImageData(img,0,0)}
+
+/* ---------- model ---------- */
+function validate(m){
+  const need=['input_mean','input_std','output_mean','output_std','layers'];
+  for(const k of need) if(!(k in m)) throw new Error(`JSON에 '${k}' 항목이 없습니다. 노트북의 내보내기 셀이 만든 Week9_CFD_browser_model.json인지 확인하세요.`);
+  const ok=['Linear','Tanh','ReLU','LeakyReLU','Sigmoid'];
+  for(const L of m.layers) if(!ok.includes(L.type)) throw new Error(`지원하지 않는 층 종류: ${L.type}`);
+  return m;
+}
+function compile(m){
+  return m.layers.map(L=>{
+    if(L.type!=='Linear') return {type:L.type,slope:L.negative_slope??0.01};
+    const out=L.weight.length,inn=L.weight[0].length,W=new Float64Array(out*inn);
+    L.weight.forEach((row,o)=>row.forEach((w,i)=>W[o*inn+i]=w));
+    return {type:'Linear',W,b:Float64Array.from(L.bias),out,inn};
+  });
+}
+/* forward one point: x,y,Re -> [u,v,p] */
+function forward(net,x,y,re){
+  let z=new Float64Array([(x-model.input_mean[0])/model.input_std[0],(y-model.input_mean[1])/model.input_std[1],(re-model.input_mean[2])/model.input_std[2]]);
+  for(const L of net){
+    if(L.type==='Linear'){const o=new Float64Array(L.out);for(let r=0;r<L.out;r++){let s=L.b[r];const off=r*L.inn;for(let i=0;i<L.inn;i++)s+=L.W[off+i]*z[i];o[r]=s}z=o}
+    else if(L.type==='Tanh'){for(let i=0;i<z.length;i++)z[i]=Math.tanh(z[i])}
+    else if(L.type==='ReLU'){for(let i=0;i<z.length;i++)z[i]=z[i]>0?z[i]:0}
+    else if(L.type==='LeakyReLU'){for(let i=0;i<z.length;i++)z[i]=z[i]>=0?z[i]:L.slope*z[i]}
+    else if(L.type==='Sigmoid'){for(let i=0;i<z.length;i++)z[i]=1/(1+Math.exp(-Math.max(-700,Math.min(700,z[i]))))}
+  }
+  return [z[0]*model.output_std[0]+model.output_mean[0],z[1]*model.output_std[1]+model.output_mean[1],z[2]*model.output_std[2]+model.output_mean[2]];
+}
+function predictField(re){
+  const u=new Float64Array(N*N),v=new Float64Array(N*N),p=new Float64Array(N*N),s=new Float64Array(N*N);
+  for(let j=0;j<N;j++){const y=(j+.5)/N;for(let i=0;i<N;i++){const x=(i+.5)/N,k=j*N+i,o=forward(model.net,x,y,re);u[k]=o[0];v[k]=o[1];p[k]=o[2];s[k]=Math.hypot(o[0],o[1])}}
+  return {re,u,v,p,s};
+}
+
+/* ---------- drawing ---------- */
+function paint(cv,arr,stops,lo,hi,smooth){
+  const off=document.createElement('canvas');off.width=N;off.height=N;
+  const c=off.getContext('2d'),img=c.createImageData(N,N);
+  for(let j=0;j<N;j++)for(let i=0;i<N;i++){const t=(arr[j*N+i]-lo)/(hi-lo||1),col=cmap(stops,t),k=((N-1-j)*N+i)*4;img.data[k]=col[0];img.data[k+1]=col[1];img.data[k+2]=col[2];img.data[k+3]=255}
+  c.putImageData(img,0,0);
+  const g=cv.getContext('2d');g.imageSmoothingEnabled=smooth;g.imageSmoothingQuality='high';g.clearRect(0,0,cv.width,cv.height);
+  if(smooth){/* centre-aligned bilinear: cell centres sit at (i+.5)/N */ g.drawImage(off,0,0,cv.width,cv.height)} else g.drawImage(off,0,0,cv.width,cv.height);
+}
+function sample(arr,x,y){/* bilinear on cell-centre grid, x,y in [0,1] */
+  const fx=Math.min(N-1.0001,Math.max(0,x*N-.5)),fy=Math.min(N-1.0001,Math.max(0,y*N-.5)),i=Math.floor(fx),j=Math.floor(fy),a=fx-i,b=fy-j;
+  return arr[j*N+i]*(1-a)*(1-b)+arr[j*N+i+1]*a*(1-b)+arr[(j+1)*N+i]*(1-a)*b+arr[(j+1)*N+i+1]*a*b;
+}
+function streamlines(cv,F){
+  const g=cv.getContext('2d'),W=cv.width;g.clearRect(0,0,W,W);
+  if(!$('stream').checked)return;
+  g.strokeStyle='rgba(255,255,255,.72)';g.lineWidth=W/600*1.1;g.lineCap='round';
+  const occ=new Uint8Array(60*60),h=.0035,seeds=[];
+  for(let j=0;j<14;j++)for(let i=0;i<14;i++)seeds.push([(i+.5)/14,(j+.5)/14]);
+  for(const [sx,sy] of seeds){
+    if(occ[Math.floor(sy*60)*60+Math.floor(sx*60)])continue;
+    for(const dir of [1,-1]){
+      let x=sx,y=sy;g.beginPath();g.moveTo(x*W,(1-y)*W);const mine=new Set();
+      for(let n=0;n<420;n++){
+        const u1=sample(F.u,x,y),v1=sample(F.v,x,y),m1=Math.hypot(u1,v1);if(m1<1e-6)break;
+        const xm=x+dir*h*u1/m1*.5,ym=y+dir*h*v1/m1*.5,u2=sample(F.u,xm,ym),v2=sample(F.v,xm,ym),m2=Math.hypot(u2,v2)||1;
+        x+=dir*h*u2/m2;y+=dir*h*v2/m2;
+        if(x<.004||x>.996||y<.004||y>.996)break;
+        const c=Math.floor(y*60)*60+Math.floor(x*60);
+        if(occ[c]&&!mine.has(c)&&n>8)break;mine.add(c);
+        g.lineTo(x*W,(1-y)*W);
+        if(n>30&&Math.hypot(x-sx,y-sy)<h*.9)break;
+      }
+      g.stroke();mine.forEach(c=>occ[c]=1);
+    }
+  }
+}
+function fmt(v,d=4){return (v>=0?' ':'')+v.toFixed(d)}
+function ticks(el,lo,hi,n=5){el.innerHTML='';for(let k=n-1;k>=0;k--){const s=document.createElement('span');s.textContent=(lo+(hi-lo)*k/(n-1)).toFixed(Math.abs(hi-lo)<.2?3:2);el.appendChild(s)}}
+function absMax(a){let m=0;for(const x of a)m=Math.max(m,Math.abs(x));return m||1e-9}
+function range(a){let lo=Infinity,hi=-Infinity;for(const x of a){lo=Math.min(lo,x);hi=Math.max(hi,x)}return[lo,hi]}
+
+const MINIS=[{key:'u',name:'u / U<sub>lid</sub>',cap:'x 방향 속도'},{key:'v',name:'v / U<sub>lid</sub>',cap:'y 방향 속도'},{key:'p',name:'p / (ρU<sub>lid</sub>²)',cap:'압력 (평균 0 기준)'}];
+function buildMinis(){
+  $('minis').innerHTML=MINIS.map(m=>`<div><div class="fieldhead"><h3>${m.name}</h3></div>
+  <div class="plot"><div class="cv"><canvas id="cv_${m.key}" width="200" height="200" aria-label="${m.cap}"></canvas></div>
+  <div class="cbar"><canvas id="bar_${m.key}" width="14" height="128"></canvas><div class="cticks" id="tk_${m.key}"></div></div></div>
+  <div class="cunit">${m.cap}</div></div>`).join('');
+  MINIS.forEach(m=>drawBar($('bar_'+m.key),COOLWARM,true));
+}
+
+function render(){
+  if(!model)return;
+  const re=+$('reSlider').value;
+  const t0=performance.now();cur=predictField(re);const dt=performance.now()-t0;
+  $('timing').textContent=`순전파 2,500점 · ${dt.toFixed(1)} ms`;
+  const ext=re>TRAIN[1];$('regimeChip').className='chip '+(ext?'warn':'good');$('regimeTxt').textContent=ext?`외삽: 학습 범위(${TRAIN[0]}–${TRAIN[1]}) 밖`:'학습 범위 내 (보간)';
+  $('reTxt').textContent=String(+re.toFixed(2));$('mainRe').textContent=`Re = ${+re.toFixed(2)}`;
+  const smooth=$('smooth').checked;
+  const [slo,shi]=$('fixScale').checked?[0,1]:[0,Math.max(...range(cur.s))];
+  paint($('mainCv'),cur.s,VIRIDIS,slo,shi,smooth);ticks($('mainTicks'),slo,shi,6);
+  streamlines($('streamCv'),cur);
+  for(const m of MINIS){const a=cur[m.key],b=absMax(a);paint($('cv_'+m.key),a,COOLWARM,-b,b,smooth);ticks($('tk_'+m.key),-b,b,5)}
+  const rng=k=>{const[a,b]=range(cur[k]);return `${a.toFixed(3)} ~ ${b.toFixed(3)}`};
+  $('sMax').textContent=Math.max(...cur.s).toFixed(4);$('sU').textContent=rng('u');$('sV').textContent=rng('v');$('sP').textContent=rng('p');
+  const vc=vortex(cur);$('sVort').textContent=`(${vc[0].toFixed(2)}, ${vc[1].toFixed(2)})`;
+  let umin=Infinity;for(let j=0;j<N;j++)umin=Math.min(umin,cur.u[j*N+25]);$('sUmin').textContent=umin.toFixed(4);
+  if(lastHover)hover(lastHover);else{const r=$('mainWrap').getBoundingClientRect();hover({clientX:r.left+r.width*.51,clientY:r.top+r.height*.49});lastHover=null}
+}
+/* primary vortex centre: extremum of stream function psi = ∫ u dy (from bottom wall), interior cells */
+function vortex(F){
+  const psi=new Float64Array(N*N);
+  for(let i=0;i<N;i++){let acc=0;for(let j=0;j<N;j++){acc+=F.u[j*N+i]/N;psi[j*N+i]=acc-F.u[j*N+i]/(2*N)}}
+  let best=0,bi=25,bj=25;for(let j=3;j<N-3;j++)for(let i=3;i<N-3;i++){const v=psi[j*N+i];if(Math.abs(v)>Math.abs(best)&&v<0){best=v;bi=i;bj=j}}
+  return[(bi+.5)/N,(bj+.5)/N];
+}
+
+let lastHover=null;
+function hover(e){
+  lastHover=e;if(!cur)return;
+  const r=$('mainWrap').getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=1-(e.clientY-r.top)/r.height;
+  if(x<0||x>1||y<0||y>1){return}
+  const i=Math.min(N-1,Math.floor(x*N)),j=Math.min(N-1,Math.floor(y*N)),k=j*N+i;
+  $('rXY').textContent=`(${((i+.5)/N).toFixed(2)}, ${((j+.5)/N).toFixed(2)})`;
+  $('rU').textContent=fmt(cur.u[k]);$('rV').textContent=fmt(cur.v[k]);$('rP').textContent=fmt(cur.p[k]);$('rS').textContent=cur.s[k].toFixed(4);
+}
+$('mainWrap').addEventListener('pointermove',hover);
+$('mainWrap').addEventListener('click',hover);
+
+/* ---------- comparison pins ---------- */
+function addPin(re){
+  if(!model)return;re=Math.round(re*100)/100;
+  if(pins.some(p=>p.re===re))return;
+  pins.push({re,F:predictField(re)});pins.sort((a,b)=>a.re-b.re);drawPins();
+}
+function drawPins(){
+  const box=$('pins');box.innerHTML='';
+  pins.forEach((p,idx)=>{
+    const d=document.createElement('div');d.className='pin';
+    const vc=vortex(p.F);
+    d.innerHTML=`<div class="cv"><canvas width="300" height="300"></canvas><canvas width="300" height="300"></canvas></div>
+    <div class="cap"><span class="num">Re = ${p.re}</span><button aria-label="Re ${p.re} 삭제">삭제</button></div>
+    <div class="cap" style="color:var(--muted)"><span>와류 중심</span><span class="num">(${vc[0].toFixed(2)}, ${vc[1].toFixed(2)})</span></div>`;
+    box.appendChild(d);
+    const [a,b]=d.querySelectorAll('canvas');paint(a,p.F.s,VIRIDIS,0,1,true);streamlines(b,p.F);
+    d.querySelector('button').onclick=()=>{pins.splice(idx,1);drawPins()};
+  });
+  if(!pins.length)box.innerHTML='<p class="note">“현재 Re 비교에 추가”를 눌러 조건을 쌓아 보세요.</p>';
+}
+
+/* ---------- verification ---------- */
+function verify(){
+  const V=model.verification,tb=$('verTable').tBodies[0];tb.innerHTML='';
+  if(!V){setVer(null,'JSON에 검증용 데이터가 없습니다');return}
+  const tol=V.absolute_tolerance??1e-5;let worst=0;
+  V.inputs.forEach((inp,r)=>{
+    const o=forward(model.net,inp[0],inp[1],inp[2]),ref=V.outputs[r],e=Math.max(...o.map((x,c)=>Math.abs(x-ref[c])));worst=Math.max(worst,e);
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${inp[0]}</td><td>${inp[1]}</td><td>${inp[2]}</td><td>${o[0].toFixed(6)}</td><td>${o[1].toFixed(6)}</td><td>${o[2].toFixed(6)}</td><td class="${e<tol?'ok':'ng'}">${e.toExponential(2)}</td>`;
+    tb.appendChild(tr);
+  });
+  setVer(worst<tol,`최대 절대오차 ${worst.toExponential(2)} ${worst<tol?'<':'≥'} ${tol.toExponential(0)}`);
+}
+function setVer(ok,txt){
+  for(const [c,t] of [['verChip','verTxt'],['verChip2','verTxt2']]){$(c).className='chip '+(ok===true?'good':ok===false?'bad':'');$(t).textContent=(ok===true?'검증 통과 · ':ok===false?'검증 실패 · ':'')+txt}
+}
+
+/* ---------- loading ---------- */
+function useModel(m,src){
+  try{
+    validate(m);model=m;model.net=compile(m);
+    $('srcTxt').textContent=src;$('srcChip').className='chip good';$('errMsg').hidden=true;
+    const s=m.settings||{},lin=m.layers.filter(l=>l.type==='Linear').map(l=>l.weight[0].length);lin.push(m.layers.filter(l=>l.type==='Linear').at(-1).weight.length);
+    $('layerInfo').textContent=`불러온 구조: ${lin.join(' → ')} · 활성화 ${s.activation??'?'} · lr ${s.learning_rate??'?'} · epochs ${s.epochs??'?'} · dataset ${m.dataset??'?'}`;
+    TRAIN=m.reynolds_range||[20,300];for(const id of ['reSlider','reNum']){$(id).min=TRAIN[0];$(id).max=1000}
+    verify();render();cmpModelChanged();
+    const keep=pins.map(p=>p.re);pins=[];(keep.length?keep:[20,137,300,500,1000]).forEach(addPin);drawPins();
+    return true;
+  }catch(err){$('errMsg').textContent=err.message;$('errMsg').hidden=false;$('srcTxt').textContent='불러오기 실패';$('srcChip').className='chip bad';$('errMsg').closest('details').open=true;return false}
+}
+function readFile(f){
+  const r=new FileReader();
+  r.onload=()=>{let m;try{m=JSON.parse(r.result)}catch(e){$('errMsg').textContent='JSON 형식을 읽을 수 없습니다: '+e.message;$('errMsg').hidden=false;$('errMsg').closest('details').open=true;return}
+    if(useModel(m,f.name)){try{localStorage.setItem('wk9model',r.result);localStorage.setItem('wk9name',f.name)}catch(e){}}};
+  r.readAsText(f);
+}
+$('file').addEventListener('change',e=>{if(e.target.files[0])readFile(e.target.files[0])});
+const app=$('app');
+app.addEventListener('dragover',e=>{e.preventDefault();app.classList.add('drop')});
+app.addEventListener('dragleave',e=>{if(e.target===app)app.classList.remove('drop')});
+app.addEventListener('drop',e=>{e.preventDefault();app.classList.remove('drop');const f=e.dataTransfer.files[0];if(f)readFile(f)});
+
+/* ---------- controls ---------- */
+let raf=0;function schedule(){cancelAnimationFrame(raf);raf=requestAnimationFrame(render)}
+$('reSlider').addEventListener('input',()=>{$('reNum').value=$('reSlider').value;schedule()});
+$('reNum').addEventListener('change',()=>{let v=+$('reNum').value;const lo=+$('reNum').min,hi=+$('reNum').max;if(!isFinite(v))v=137;v=Math.min(hi,Math.max(lo,v));$('reNum').value=v;$('reSlider').value=v;schedule()});
+document.querySelectorAll('[data-re]').forEach(b=>b.addEventListener('click',()=>{$('reSlider').value=b.dataset.re;$('reNum').value=b.dataset.re;schedule()}));
+['stream','smooth','fixScale'].forEach(id=>$(id).addEventListener('change',schedule));
+$('pinBtn').addEventListener('click',()=>addPin(+$('reNum').value));
+window.addEventListener('resize',()=>{clearTimeout(rzT);rzT=setTimeout(()=>{if(CFD&&model)drawCharts()},120)});
+
+/* ---------- extrapolation: CFD reference vs AI ---------- */
+let TRAIN=[20,300],CFD=null,cmpRe=500,cmpQ='s',cmpNN={},rzT=0;
+const REDS=[[255,245,240],[252,187,161],[252,146,114],[251,106,74],[222,45,38],[165,15,21],[103,0,13]];
+const QS={s:{txt:'|u|',html:'|u| / U<sub>lid</sub>',seq:true},u:{txt:'u',html:'u / U<sub>lid</sub>'},v:{txt:'v',html:'v / U<sub>lid</sub>'},p:{txt:'p',html:'p / (ρU<sub>lid</sub>²), 평균 0 기준'}};
+const css=k=>getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+function nnAt(re){return cmpNN[re]||(cmpNN[re]=predictField(re))}
+function rmse(a,b){let s=0;for(let k=0;k<a.length;k++){const d=a[k]-b[k];s+=d*d}return Math.sqrt(s/a.length)}
+function cmpModelChanged(){cmpNN={};if(CFD)drawCmp()}
+async function loadCFD(){
+  try{
+    const r=await fetch('cfd_reference.json',{cache:'no-cache'});if(!r.ok)throw new Error('HTTP '+r.status);
+    CFD=await r.json();
+    for(const c of CFD.cases){for(const k of ['u','v','p'])c[k]=Float64Array.from(c[k]);c.s=c.u.map((x,i)=>Math.hypot(x,c.v[i]))}
+    $('cmpRes').innerHTML=CFD.cases.map(c=>`<button data-cre="${c.re}" class="${c.re>TRAIN[1]?'ext':''}" aria-pressed="${c.re===cmpRe}">${c.re}</button>`).join('');
+    $('cmpRes').querySelectorAll('button').forEach(b=>b.onclick=()=>{cmpRe=+b.dataset.cre;drawCmp()});
+    $('cmpChip').className='chip good';$('cmpChipTxt').textContent=`CFD 기준 ${CFD.cases.length}개 조건 · 모두 수렴`;
+    drawCmp();
+  }catch(e){$('cmpChip').className='chip bad';$('cmpChipTxt').textContent='CFD 데이터 없음';$('cmpErr').textContent='cfd_reference.json을 불러오지 못했습니다 ('+e.message+'). 웹사이트 주소로 접속했는지 확인하세요.';$('cmpErr').hidden=false}
+}
+function drawCmp(){
+  if(!CFD||!model)return;
+  const c=CFD.cases.find(c=>c.re===cmpRe)||CFD.cases[0];cmpRe=c.re;
+  const F=nnAt(c.re),q=cmpQ,A=c[q],B=F[q],Q=QS[q],smooth=$('smooth').checked;
+  $('cmpRes').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(+b.dataset.cre===c.re)));
+  $('cmpQs').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.q===q)));
+  const ext=c.re>TRAIN[1];
+  for(const id of ['cmpReA','cmpReB'])$(id).textContent=`Re = ${c.re}${ext?' · 외삽':c.re===TRAIN[1]?' · 학습 경계':' · 학습 범위 내'}`;
+  let lo,hi;if(Q.seq){lo=0;hi=Math.max(...range(A),...range(B))}else{hi=Math.max(absMax(A),absMax(B));lo=-hi}
+  const stops=Q.seq?VIRIDIS:COOLWARM;
+  paint($('cmpCfd'),A,stops,lo,hi,smooth);paint($('cmpNn'),B,stops,lo,hi,smooth);
+  drawBar($('cmpBar'),stops,true);ticks($('cmpTicks'),lo,hi,6);
+  streamlines($('cmpCfdS'),c);streamlines($('cmpNnS'),F);
+  const E=B.map((x,k)=>Math.abs(x-A[k])),emax=Math.max(...E)||1e-9;
+  paint($('cmpErrCv'),E,REDS,0,emax,smooth);drawBar($('cmpErrBar'),REDS,true);ticks($('cmpErrTicks'),0,emax,6);
+  $('cmpUnit').innerHTML=`CFD·AI 공통 컬러바: ${Q.html} (${lo.toFixed(3)} ~ ${hi.toFixed(3)}) · 오차 그림은 0 ~ ${emax.toFixed(3)} 별도 범위 · 가로축 x / L, 세로축 y / L, 윗벽이 lid`;
+  const [alo,ahi]=range(A),er=rmse(A,B);
+  $('cRmse').textContent=er.toFixed(4);$('cMax').textContent=emax.toFixed(4);$('cRel').textContent=(100*er/(ahi-alo||1)).toFixed(1)+' %';
+  $('cSpd').textContent=`${Math.max(...c.s).toFixed(3)} / ${Math.max(...F.s).toFixed(3)}`;
+  const vc=vortex(c),vn=vortex(F);$('cVc').textContent=`(${vc[0].toFixed(2)}, ${vc[1].toFixed(2)})`;$('cVn').textContent=`(${vn[0].toFixed(2)}, ${vn[1].toFixed(2)})`;
+  $('cmpChip').className='chip '+(ext?'warn':'good');$('cmpChipTxt').textContent=ext?`Re ${c.re}: 학습 범위 밖 (외삽)`:`Re ${c.re}: 학습 범위 안`;
+  $('chEq').textContent=Q.txt;
+  drawCharts();
+}
+function lineChart(cv,o){
+  const dpr=window.devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;if(!W)return;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,W,H);
+  const L=44,R=10,T=8,B=30,pw=W-L-R,ph=H-T-B,[x0,x1]=o.xlim,[y0,y1]=o.ylim;
+  const X=x=>L+(x-x0)/(x1-x0)*pw,Y=y=>T+(1-(y-y0)/(y1-y0))*ph,mut=css('--muted'),line=css('--line');
+  g.font='10px '+css('--f-mono');g.fillStyle=mut;g.strokeStyle=line;g.lineWidth=1;
+  if(o.shade){g.fillStyle=css('--good');g.globalAlpha=.13;g.fillRect(X(o.shade[0]),T,X(o.shade[1])-X(o.shade[0]),ph);g.globalAlpha=1;g.fillStyle=mut}
+  for(let k=0;k<=4;k++){const xv=x0+(x1-x0)*k/4,yv=y0+(y1-y0)*k/4;
+    g.beginPath();g.moveTo(L,Y(yv));g.lineTo(L+pw,Y(yv));g.stroke();
+    g.textAlign='right';g.textBaseline='middle';g.fillText(String(+yv.toFixed(o.yd??2)),L-4,Y(yv));
+    g.textAlign='center';g.textBaseline='top';g.fillText(String(+xv.toFixed(o.xd??2)),X(xv),T+ph+4)}
+  if(o.zero){g.strokeStyle=mut;g.setLineDash([2,3]);g.beginPath();if(o.zero==='x'){g.moveTo(X(0),T);g.lineTo(X(0),T+ph)}else{g.moveTo(L,Y(0));g.lineTo(L+pw,Y(0))}g.stroke();g.setLineDash([])}
+  if(o.marker!=null){g.strokeStyle=css('--accent');g.globalAlpha=.6;g.beginPath();g.moveTo(X(o.marker),T);g.lineTo(X(o.marker),T+ph);g.stroke();g.globalAlpha=1}
+  g.save();g.beginPath();g.rect(L,T,pw,ph);g.clip();
+  for(const s of o.series){g.strokeStyle=s.color;g.lineWidth=s.w||1.8;g.setLineDash(s.dash||[]);g.beginPath();
+    s.xs.forEach((x,k)=>{const px=X(x),py=Y(s.ys[k]);k?g.lineTo(px,py):g.moveTo(px,py)});g.stroke();g.setLineDash([]);
+    if(s.dots){g.fillStyle=s.color;s.xs.forEach((x,k)=>{g.beginPath();g.arc(X(x),Y(s.ys[k]),s.hi&&s.hi(x)?4.5:2.5,0,7);g.fill()})}}
+  g.restore();
+  g.fillStyle=mut;g.font='11px '+css('--f-sans');g.textAlign='center';g.textBaseline='bottom';g.fillText(o.xlabel,L+pw/2,H);
+  g.save();g.translate(11,T+ph/2);g.rotate(-Math.PI/2);g.textBaseline='middle';g.fillText(o.ylabel,0,0);g.restore();
+}
+function drawCharts(){
+  const c=CFD.cases.find(c=>c.re===cmpRe),F=nnAt(cmpRe),ys=[],uc=[],un=[],vc=[],vn=[],ink=css('--ink'),acc=css('--accent');
+  /* N=50 is even, so x=0.5 (y=0.5) lies between cell columns (rows) 24 and 25 */
+  for(let j=0;j<N;j++){ys.push((j+.5)/N);uc.push((c.u[j*N+24]+c.u[j*N+25])/2);un.push((F.u[j*N+24]+F.u[j*N+25])/2);
+    vc.push((c.v[24*N+j]+c.v[25*N+j])/2);vn.push((F.v[24*N+j]+F.v[25*N+j])/2)}
+  lineChart($('chU'),{xlim:[-.5,1],ylim:[0,1],xlabel:'u / U_lid',ylabel:'y / L',zero:'x',
+    series:[{xs:uc,ys,color:ink},{xs:un,ys,color:acc,dash:[6,4]}]});
+  lineChart($('chV'),{xlim:[0,1],ylim:[-.6,.4],xlabel:'x / L',ylabel:'v / U_lid',zero:'y',
+    series:[{xs:ys,ys:vc,color:ink},{xs:ys,ys:vn,color:acc,dash:[6,4]}]});
+  const res=CFD.cases.map(c=>c.re),es=CFD.cases.map(cc=>rmse(cc[cmpQ],nnAt(cc.re)[cmpQ])),em=Math.max(...es);
+  lineChart($('chE'),{xlim:[0,1000],ylim:[0,Math.ceil(em*1.15*100)/100],xlabel:'Reynolds number, Re',ylabel:'RMSE',shade:[TRAIN[0],TRAIN[1]],marker:cmpRe,xd:0,yd:3,
+    series:[{xs:res,ys:es,color:css('--bad'),dots:true,hi:x=>x===cmpRe}]});
+}
+$('cmpQs').querySelectorAll('button').forEach(b=>b.onclick=()=>{cmpQ=b.dataset.q;drawCmp()});
+$('cmpToMain').onclick=()=>{$('reSlider').value=cmpRe;$('reNum').value=cmpRe;schedule();window.scrollTo({top:0,behavior:'smooth'})};
+['stream','smooth'].forEach(id=>$(id).addEventListener('change',drawCmp));
+
+/* ---------- boot ---------- */
+buildMinis();drawBar($('mainBar'),VIRIDIS,true);drawBar($('pinBar'),VIRIDIS,false);
+(function boot(){
+  let saved=null,name=null;try{saved=localStorage.getItem('wk9model');name=localStorage.getItem('wk9name')}catch(e){}
+  if(saved){try{if(useModel(JSON.parse(saved),name+' (지난번 불러온 파일)'))return}catch(e){}}
+  const t=$('embedded-model').textContent.trim();
+  if(t&&t!=='__MODEL_JSON__'&&t!=='null'){try{useModel(JSON.parse(t),'내장 모델 (Week9_CFD_browser_model.json)')}catch(e){}}
+  else{$('srcTxt').textContent='모델 JSON을 불러오세요';drawPins()}
+})();
+loadCFD();
+</script>
+
+</body></html>
